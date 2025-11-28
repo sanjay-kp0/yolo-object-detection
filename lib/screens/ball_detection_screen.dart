@@ -14,46 +14,49 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
   List<Map<String, dynamic>> _detections = [];
   int _ballCount = 0;
   bool _isCameraReady = false;
-  final Size _imageSize = const Size(640, 640);
+  // Image size from YOLO model (width x height) - matches overlay dimensions
+  final Size _imageSize = const Size(480, 640);
 
   void _onResult(dynamic result) {
     if (!mounted) return;
 
-    print("results: $result");
-
     try {
-      List<Map<String, dynamic>> allDetections = [];
+      List<Map<String, dynamic>> ballDetections = [];
 
-      // Handle different result formats
-      // if (result is Map) {
-      //   // If result is a map with 'boxes' key
-      //   if (result['boxes'] != null && result['boxes'] is List) {
-      //     print("map1234");
-      //     allDetections = List<Map<String, dynamic>>.from(result['boxes']);
-      //   }
-      //   // If result is a map with 'detections' key
-      //   else if (result['detections'] != null && result['detections'] is List) {
-      //     print("detections1234");
-      //     allDetections = List<Map<String, dynamic>>.from(result['detections']);
-      //   }
-      //   // If result itself is the detection list
-      //   else if (result.containsKey('class')) {
-      //     print("class1234");
-      //     allDetections = [Map<String, dynamic>.from(result)];
-      //   }
-      // } else if (result is List) {
-        // print("list1234");
-        allDetections = List<Map<String, dynamic>>.from(result);
-      // }
-
-      // Filter detections to only include balls
-      final ballDetections =
-          allDetections.where((detection) {
-            final className =
-                detection['class']?.toString().toLowerCase() ?? '';
-            return className.contains('ball') ||
-                className.contains('sports ball');
-          }).toList();
+      // Handle YOLOResult objects (List<YOLOResult>)
+      if (result is List) {
+        for (var item in result) {
+          // Check if it's a YOLOResult object
+          if (item is YOLOResult) {
+            final className = item.className.toLowerCase();
+            
+            // Filter only balls
+            if (className.contains('ball') || className.contains('sports ball')) {
+              // Extract bounding box from Rect
+              final rect = item.boundingBox;
+              
+              // Convert YOLOResult to Map format for the painter
+              ballDetections.add({
+                'class': item.className,
+                'confidence': item.confidence,
+                'box': {
+                  'x1': rect.left,
+                  'y1': rect.top,
+                  'x2': rect.right,
+                  'y2': rect.bottom,
+                },
+              });
+            }
+          }
+          // Fallback: try to convert Map if needed
+          else if (item is Map) {
+            final className = (item['className'] ?? item['class'] ?? '').toString().toLowerCase();
+            if (className.contains('ball') || className.contains('sports ball')) {
+              ballDetections.add(Map<String, dynamic>.from(item));
+            }
+          }
+        }
+      }
 
       setState(() {
         _detections = ballDetections;
@@ -92,9 +95,10 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
             onResult: _onResult,
           ),
 
-          // Custom painter overlay for drawing circles
-          if (_isCameraReady)
-            Positioned.fill(
+          // Custom painter overlay for drawing glowing circles around balls
+          // Always show overlay (even if empty) to ensure it's on top
+          Positioned.fill(
+            child: IgnorePointer(
               child: CustomPaint(
                 painter: BallPainter(
                   detections: _detections,
@@ -103,6 +107,7 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
                 ),
               ),
             ),
+          ),
 
           // Stats overlay at the top
           Positioned(
@@ -190,7 +195,7 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
               ),
               child: const Text(
                 'Point your camera at a ball to detect it.\n'
-                'Green circle will appear around detected balls.',
+                'Glowing green circle will appear around detected balls.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white70,
