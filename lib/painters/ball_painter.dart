@@ -15,7 +15,7 @@ class BallPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (detections.isEmpty) {
-      print("BallPainter: No detections to paint");
+
       return;
     }
 

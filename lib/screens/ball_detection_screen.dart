@@ -1,5 +1,7 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
+import 'package:ultralytics_yolo/widgets/yolo_controller.dart';
 import 'package:ultralytics_yolo/yolo_view.dart';
 import '../painters/ball_painter.dart';
 
@@ -35,6 +37,7 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
   }
 
   void _onResult(dynamic result) {
+    print("🎯 Flutter: getting result - type: ${result.runtimeType}");
     if (!mounted) return;
 
     try {
@@ -43,13 +46,16 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
 
       // Handle YOLOResult objects (List<YOLOResult>)
       if (result is List) {
+        print("🎯 Flutter: Result is List with ${result.length} items");
         for (var item in result) {
           // Check if it's a YOLOResult object
           if (item is YOLOResult) {
             final className = item.className.toLowerCase();
+            print("🎯 Flutter: Detection - class: $className, confidence: ${item.confidence}");
             
+            // TEMPORARILY: Accept ALL detections to test
             // Filter only balls
-            if (className.contains('sports ball')) {
+            if (className.contains('sports ball') || true) { // Accept everything for testing
               // Extract bounding box from Rect
               final rect = item.boundingBox;
               
@@ -68,22 +74,23 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
           }
           // Fallback: try to convert Map if needed
           else if (item is Map) {
+            print("🎯 Flutter: Detection from Map: ${item['className'] ?? item['class']}");
             final className = (item['className'] ?? item['class'] ?? '').toString().toLowerCase();
-            if (className.contains('ball') || className.contains('sports ball')) {
+            if (className.contains('ball') || className.contains('sports ball') || true) { // Accept everything
               ballDetections.add(Map<String, dynamic>.from(item));
             }
           }
         }
       }
 
-
+      print("🎯 Flutter: Total detections after filtering: ${ballDetections.length}");
       setState(() {
         _detections = ballDetections;
         _ballCount = ballDetections.length;
         _isCameraReady = true;
       });
     } catch (e,st) {
-      debugPrint('Error processing detection result: $e place $st');
+      debugPrint('❌ Flutter: Error processing detection result: $e place $st');
     }
   }
 
@@ -107,9 +114,9 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
         children: [
           // Camera view with YOLO detection
           YOLOView(
-            modelPath: 'yolo11n',
+            modelPath: Platform.isIOS ? 'nano_custom' : 'yolo11n',
             task: YOLOTask.detect,
-            confidenceThreshold: 0.1,
+            confidenceThreshold: 0.01, // Very low to catch anything
             iouThreshold: 0.5,
             onResult: _onResult,
           ),
