@@ -14,14 +14,32 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
   List<Map<String, dynamic>> _detections = [];
   int _ballCount = 0;
   bool _isCameraReady = false;
+
   // Image size from YOLO model (width x height) - matches overlay dimensions
   final Size _imageSize = const Size(480, 640);
+
+  Map<String, dynamic> _mapFromYoloResult(YOLOResult detection) {
+    final box = detection.boundingBox;
+
+    return {
+      'class': detection.className ?? '',
+      'classIndex': detection.classIndex,
+      'confidence': detection.confidence,
+      'box': {
+        'x1': box.left,
+        'y1': box.top,
+        'x2': box.right,
+        'y2': box.bottom,
+      },
+    };
+  }
 
   void _onResult(dynamic result) {
     if (!mounted) return;
 
     try {
       List<Map<String, dynamic>> ballDetections = [];
+
 
       // Handle YOLOResult objects (List<YOLOResult>)
       if (result is List) {
@@ -31,7 +49,7 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
             final className = item.className.toLowerCase();
             
             // Filter only balls
-            if (className.contains('ball') || className.contains('sports ball')) {
+            if (className.contains('sports ball')) {
               // Extract bounding box from Rect
               final rect = item.boundingBox;
               
@@ -58,13 +76,14 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
         }
       }
 
+
       setState(() {
         _detections = ballDetections;
         _ballCount = ballDetections.length;
         _isCameraReady = true;
       });
-    } catch (e) {
-      debugPrint('Error processing detection result: $e');
+    } catch (e,st) {
+      debugPrint('Error processing detection result: $e place $st');
     }
   }
 
@@ -94,6 +113,19 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
             iouThreshold: 0.5,
             onResult: _onResult,
           ),
+
+
+          Positioned(
+              top: 60,
+              left: 0,
+              right: 0,
+              child: TextButton(onPressed: (){
+            try {
+              YOLOViewController().switchCamera();
+            }catch(er){
+              print("error switching camera");
+            }
+          }, child: Text("Switch camera"))),
 
           // Custom painter overlay for drawing glowing circles around balls
           // Always show overlay (even if empty) to ensure it's on top
