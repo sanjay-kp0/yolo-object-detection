@@ -68,7 +68,7 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
           YOLOView(
             controller: _controller,
             // Use your custom trained model
-            modelPath: Platform.isIOS ? 'nano_custom' : 'your_custom_model',
+            modelPath: Platform.isIOS ? 'nano_custom' : 'yolo11n',
             task: YOLOTask.detect,
             
             // OPTIMIZED THRESHOLDS FOR SINGLE-CLASS BALL DETECTION
