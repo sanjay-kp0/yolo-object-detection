@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'screens/ball_detection_screen.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'screens/ball_detection_screen_optimized.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,7 +12,12 @@ void main() {
     DeviceOrientation.portraitDown,
   ]);
   
-  runApp(const BallDetectionApp());
+  // Wrap app with ProviderScope for Riverpod
+  runApp(
+    const ProviderScope(
+      child: BallDetectionApp(),
+    ),
+  );
 }
 
 class BallDetectionApp extends StatelessWidget {
