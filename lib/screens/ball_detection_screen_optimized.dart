@@ -29,8 +29,9 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
   Future<void> _setMaxOneDetection() async {
     if (_thresholdsSet) return;
     try {
+
       await _controller.setThresholds(
-        confidenceThreshold: 0.55,
+        confidenceThreshold: 0.30,
         iouThreshold: 0.35,
         numItemsThreshold: 1,  // MAX 1 DETECTION AT A TIME
       );
@@ -70,11 +71,11 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
             // Use your custom trained model
             modelPath: Platform.isIOS ? 'nano_custom' : 'yolo11n',
             task: YOLOTask.detect,
-            
-            // OPTIMIZED THRESHOLDS FOR SINGLE-CLASS BALL DETECTION
-            confidenceThreshold: 0.10, // Higher threshold since model is specialized
-            iouThreshold: 0.35,
             lensFacing: LensFacing.front,
+            
+            // ENABLE NATIVE OVERLAYS - Native circle drawing (faster!)
+            showNativeUI: false,       // Hide sliders and FPS
+            showOverlays: true,        // Show native circles
             
             // PLATFORM-SPECIFIC STREAMING CONFIG
             streamingConfig: Platform.isAndroid
@@ -104,12 +105,14 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
                     includeFps: true,
                   ),
             
-            // Callback - uses Riverpod instead of setState
-            onResult: (result) {
-              ref.read(ballDetectionProvider.notifier).processResults(result);
+            // Callback - uses streaming data to get frame size (dynamic for all devices)
+            onStreamingData: (data) {
+              ref.read(ballDetectionProvider.notifier).processStreamingData(data);
             },
           ),
 
+          // Native overlay now draws circles directly - no Flutter painter needed!
+          // The native code (iOS Swift / Android Kotlin) draws the circles for us
 
           // Stats overlay at the top - Only rebuilds when ballCount changes
           Positioned(

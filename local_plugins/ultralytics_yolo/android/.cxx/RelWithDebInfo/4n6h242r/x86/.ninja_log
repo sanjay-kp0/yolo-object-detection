@@ -1,0 +1,3 @@
+# ninja log v5
+0	1918	1764586067959222569	CMakeFiles/ultralytics.dir/native-lib.cpp.o	6c2f5036b5ef46e1
+1923	2082	1764586068132321478	/Users/kashanflickit/development/flickit_github/yolo-object-detection/build/ultralytics_yolo/intermediates/cxx/RelWithDebInfo/4n6h242r/obj/x86/libultralytics.so	b402fceef44424ba

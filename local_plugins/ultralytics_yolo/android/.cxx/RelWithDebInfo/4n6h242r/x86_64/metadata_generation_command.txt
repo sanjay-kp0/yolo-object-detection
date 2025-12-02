@@ -1,0 +1,19 @@
+                        -H/Users/kashanflickit/.pub-cache/hosted/pub.dev/ultralytics_yolo-0.1.42/android/src/main/cpp
+-DCMAKE_SYSTEM_NAME=Android
+-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+-DCMAKE_SYSTEM_VERSION=21
+-DANDROID_PLATFORM=android-21
+-DANDROID_ABI=x86_64
+-DCMAKE_ANDROID_ARCH_ABI=x86_64
+-DANDROID_NDK=/Users/kashanflickit/Library/Android/sdk/ndk/28.0.13004108
+-DCMAKE_ANDROID_NDK=/Users/kashanflickit/Library/Android/sdk/ndk/28.0.13004108
+-DCMAKE_TOOLCHAIN_FILE=/Users/kashanflickit/Library/Android/sdk/ndk/28.0.13004108/build/cmake/android.toolchain.cmake
+-DCMAKE_MAKE_PROGRAM=/Users/kashanflickit/Library/Android/sdk/cmake/3.22.1/bin/ninja
+-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/Users/kashanflickit/development/flickit_github/yolo-object-detection/build/ultralytics_yolo/intermediates/cxx/RelWithDebInfo/4n6h242r/obj/x86_64
+-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/Users/kashanflickit/development/flickit_github/yolo-object-detection/build/ultralytics_yolo/intermediates/cxx/RelWithDebInfo/4n6h242r/obj/x86_64
+-DCMAKE_BUILD_TYPE=RelWithDebInfo
+-B/Users/kashanflickit/.pub-cache/hosted/pub.dev/ultralytics_yolo-0.1.42/android/.cxx/RelWithDebInfo/4n6h242r/x86_64
+-GNinja
+-DANDROID_STL=c++_shared
+                        Build command args: []
+                        Version: 2

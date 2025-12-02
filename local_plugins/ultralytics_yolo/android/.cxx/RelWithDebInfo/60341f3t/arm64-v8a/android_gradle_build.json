@@ -1,0 +1,38 @@
+{
+  "buildFiles": [
+    "/Users/kashanflickit/development/flickit_github/yolo-object-detection/local_plugins/ultralytics_yolo/android/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/kashanflickit/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/kashanflickit/development/flickit_github/yolo-object-detection/local_plugins/ultralytics_yolo/android/.cxx/RelWithDebInfo/60341f3t/arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/kashanflickit/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/kashanflickit/development/flickit_github/yolo-object-detection/local_plugins/ultralytics_yolo/android/.cxx/RelWithDebInfo/60341f3t/arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "ultralytics::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "ultralytics",
+      "output": "/Users/kashanflickit/development/flickit_github/yolo-object-detection/build/ultralytics_yolo/intermediates/cxx/RelWithDebInfo/60341f3t/obj/arm64-v8a/libultralytics.so",
+      "runtimeFiles": []
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "/Users/kashanflickit/Library/Android/sdk/ndk/28.0.13004108/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang.lld",
+      "cppCompilerExecutable": "/Users/kashanflickit/Library/Android/sdk/ndk/28.0.13004108/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++.lld"
+    }
+  },
+  "cFileExtensions": [],
+  "cppFileExtensions": [
+    "cpp"
+  ]
+}

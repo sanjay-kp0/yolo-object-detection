@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'screens/ball_detection_screen_optimized.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Set preferred orientations
-  SystemChrome.setPreferredOrientations([
+  // Set portrait orientation
+  await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+  
+  // Enable wakelock to keep screen on during detection
+  await WakelockPlus.enable();
   
   // Wrap app with ProviderScope for Riverpod
   runApp(

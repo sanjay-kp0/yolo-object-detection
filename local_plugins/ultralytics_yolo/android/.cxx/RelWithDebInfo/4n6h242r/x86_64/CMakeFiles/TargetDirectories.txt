@@ -1,0 +1,3 @@
+/Users/kashanflickit/.pub-cache/hosted/pub.dev/ultralytics_yolo-0.1.42/android/.cxx/RelWithDebInfo/4n6h242r/x86_64/CMakeFiles/ultralytics.dir
+/Users/kashanflickit/.pub-cache/hosted/pub.dev/ultralytics_yolo-0.1.42/android/.cxx/RelWithDebInfo/4n6h242r/x86_64/CMakeFiles/edit_cache.dir
+/Users/kashanflickit/.pub-cache/hosted/pub.dev/ultralytics_yolo-0.1.42/android/.cxx/RelWithDebInfo/4n6h242r/x86_64/CMakeFiles/rebuild_cache.dir
