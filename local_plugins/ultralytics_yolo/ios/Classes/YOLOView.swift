@@ -406,9 +406,9 @@ public class YOLOView: UIView, VideoCaptureDelegate {
       busy = true
       let orientation = UIDevice.current.orientation
       print("📹 YOLOView.start: Setting up video capture...")
-      videoCapture.setUp(sessionPreset: .photo, position: position, orientation: orientation) {
+      videoCapture.setUp(sessionPreset: .hd1280x720, position: position, orientation: orientation) {
         success in
-        // .hd4K3840x2160 or .photo (4032x3024)  Warning: 4k may not work on all devices i.e. 2019 iPod
+        // Using 720p for optimal performance (1280x720)
         if success {
           print("✅ YOLOView.start: Video capture setup successful")
           // Add the video preview into the UI.

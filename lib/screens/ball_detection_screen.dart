@@ -134,19 +134,7 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
             }
           }, child: Text("Switch camera"))),
 
-          // Custom painter overlay for drawing glowing circles around balls
-          // Always show overlay (even if empty) to ensure it's on top
-          Positioned.fill(
-            child: IgnorePointer(
-              child: CustomPaint(
-                painter: BallPainter(
-                  detections: _detections,
-                  imageSize: _imageSize,
-                  screenSize: MediaQuery.of(context).size,
-                ),
-              ),
-            ),
-          ),
+     
 
           // Stats overlay at the top
           Positioned(

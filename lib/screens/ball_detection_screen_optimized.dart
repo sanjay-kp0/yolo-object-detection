@@ -1,21 +1,20 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ultralytics_yolo/ultralytics_yolo.dart';
 import 'package:ultralytics_yolo/widgets/yolo_controller.dart';
 import 'package:ultralytics_yolo/yolo_view.dart';
-import '../providers/ball_detection_provider.dart';
 
-class BallDetectionScreen extends ConsumerStatefulWidget {
+class BallDetectionScreen extends StatefulWidget {
   const BallDetectionScreen({super.key});
 
   @override
-  ConsumerState<BallDetectionScreen> createState() => _BallDetectionScreenState();
+  State<BallDetectionScreen> createState() => _BallDetectionScreenState();
 }
 
-class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
+class _BallDetectionScreenState extends State<BallDetectionScreen> {
   final YOLOViewController _controller = YOLOViewController();
   bool _thresholdsSet = false;
+  bool _isCameraReady = false;
 
   @override
   void initState() {
@@ -24,12 +23,15 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
     Future.delayed(const Duration(milliseconds: 500), () {
       _setMaxOneDetection();
     });
+    // Mark camera ready after short delay
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _isCameraReady = true);
+    });
   }
 
   Future<void> _setMaxOneDetection() async {
     if (_thresholdsSet) return;
     try {
-
       await _controller.setThresholds(
         confidenceThreshold: 0.30,
         iouThreshold: 0.35,
@@ -44,11 +46,6 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch specific providers to minimize rebuilds
-    final ballCount = ref.watch(ballCountProvider);
-    final detections = ref.watch(detectionsProvider);
-    final isCameraReady = ref.watch(cameraReadyProvider);
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -77,60 +74,40 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
             showNativeUI: false,       // Hide sliders and FPS
             showOverlays: true,        // Show native circles
             
-            // PLATFORM-SPECIFIC STREAMING CONFIG
+            // PERFORMANCE SETTINGS - Control inference frequency
             streamingConfig: Platform.isAndroid
                 ? YOLOStreamingConfig(
-                    // Android: Optimized for low-end devices
-                    inferenceFrequency: 10,      // 10 FPS inference
-                    maxFPS: 15,                  // 15 FPS display
-                    includeMasks: false,         // Not needed for ball detection
-                    includePoses: false,         // Not needed
-                    includeOBB: false,          // Not needed
-                    includeOriginalImage: false, // Saves memory
-                    includeDetections: true,
-                    includeClassifications: true,
-                    includeProcessingTimeMs: true,
-                    includeFps: true,
-                  )
-                : YOLOStreamingConfig(
-                    // iOS: Better performance, higher FPS
-                    inferenceFrequency: 30,      // 20 FPS inference
+                    // Android: Optimized for performance
+                    inferenceFrequency: 15,      // 20 FPS inference
                     includeMasks: false,
                     includePoses: false,
                     includeOBB: false,
                     includeOriginalImage: false,
                     includeDetections: true,
-                    includeClassifications: true,
-                    includeProcessingTimeMs: true,
-                    includeFps: true,
+                    includeClassifications: false,
+                    includeProcessingTimeMs: false,
+                    includeFps: false,
+                  )
+                : YOLOStreamingConfig(
+                    // iOS: Higher performance
+                    inferenceFrequency: 30,      // 30 FPS inference
+                    includeMasks: false,
+                    includePoses: false,
+                    includeOBB: false,
+                    includeOriginalImage: false,
+                    includeDetections: true,
+                    includeClassifications: false,
+                    includeProcessingTimeMs: false,
+                    includeFps: false,
                   ),
-            
-            // Callback - uses streaming data to get frame size (dynamic for all devices)
-            onStreamingData: (data) {
-              ref.read(ballDetectionProvider.notifier).processStreamingData(data);
-            },
+            // NO Flutter callback - everything handled natively for max performance!
           ),
 
-          // Native overlay now draws circles directly - no Flutter painter needed!
-          // The native code (iOS Swift / Android Kotlin) draws the circles for us
+          // Native overlay draws circles directly - no Flutter painter needed!
+          // The native code (iOS Swift / Android Kotlin) draws the circles for max performance
 
-          // Stats overlay at the top - Only rebuilds when ballCount changes
-          Positioned(
-            top: 20,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Consumer(
-                builder: (context, ref, child) {
-                  final count = ref.watch(ballCountProvider);
-                  return _buildStatsOverlay(count);
-                },
-              ),
-            ),
-          ),
-
-          // Loading indicator when camera is not ready - Only rebuilds when camera state changes
-          if (!isCameraReady)
+          // Loading indicator when camera is not ready
+          if (!_isCameraReady)
             const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -165,7 +142,7 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
               ),
               child: const Text(
                 'Point your camera at a ball to detect it.\n'
-                'Bounding boxes will appear around detected balls.',
+                'Native circles will appear around detected balls.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white70,
@@ -179,51 +156,5 @@ class _BallDetectionScreenState extends ConsumerState<BallDetectionScreen> {
       ),
     );
   }
-
-  /// Build stats overlay widget
-  Widget _buildStatsOverlay(int ballCount) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 24,
-        vertical: 12,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.black87,
-        borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: Colors.greenAccent, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.greenAccent.withOpacity(0.3),
-            blurRadius: 10,
-            spreadRadius: 2,
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.sports_soccer,
-            color: Colors.greenAccent,
-            size: 28,
-          ),
-          const SizedBox(width: 12),
-          Text(
-            ballCount == 0
-                ? 'No balls detected'
-                : ballCount == 1
-                    ? '1 Ball Detected'
-                    : '$ballCount Balls Detected',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
 }
 

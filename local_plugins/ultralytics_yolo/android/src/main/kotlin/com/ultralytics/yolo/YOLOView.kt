@@ -519,13 +519,14 @@ class YOLOView @JvmOverloads constructor(
                     val cameraProvider = cameraProviderFuture.get()
                     Log.d(TAG, "Camera provider obtained")
 
+                    // Using 720p (1280x720) for optimal performance
                     previewUseCase = Preview.Builder()
-                        .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                        .setTargetResolution(android.util.Size(1280, 720))
                         .build()
 
                     imageAnalysisUseCase = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                        .setTargetResolution(android.util.Size(1280, 720))
                         .build()
 
                     cameraExecutor = Executors.newSingleThreadExecutor()
