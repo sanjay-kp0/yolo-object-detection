@@ -520,13 +520,18 @@ class YOLOView @JvmOverloads constructor(
                     Log.d(TAG, "Camera provider obtained")
 
                     // Using 720p (1280x720) for optimal performance
+                    // Force landscape rotation (Surface.ROTATION_90 = landscape)
+                    val landscapeRotation = android.view.Surface.ROTATION_90
+                    
                     previewUseCase = Preview.Builder()
                         .setTargetResolution(android.util.Size(1280, 720))
+                        .setTargetRotation(landscapeRotation)
                         .build()
 
                     imageAnalysisUseCase = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .setTargetResolution(android.util.Size(1280, 720))
+                        .setTargetRotation(landscapeRotation)
                         .build()
 
                     cameraExecutor = Executors.newSingleThreadExecutor()

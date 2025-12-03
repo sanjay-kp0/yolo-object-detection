@@ -404,8 +404,10 @@ public class YOLOView: UIView, VideoCaptureDelegate {
     print("📹 YOLOView.start: Starting camera with position: \(position)")
     if !busy {
       busy = true
-      let orientation = UIDevice.current.orientation
-      print("📹 YOLOView.start: Setting up video capture...")
+      // Force landscape orientation for locked landscape apps
+      // Use landscapeLeft as default (home button on right)
+      let orientation: UIDeviceOrientation = .landscapeLeft
+      print("📹 YOLOView.start: Forcing LANDSCAPE orientation for camera")
       videoCapture.setUp(sessionPreset: .hd1280x720, position: position, orientation: orientation) {
         success in
         // Using 720p for optimal performance (1280x720)
@@ -582,8 +584,11 @@ public class YOLOView: UIView, VideoCaptureDelegate {
     var resultCount = 0
 
     resultCount = predictions.boxes.count
-
-    if UIDevice.current.orientation == .portrait {
+    
+    // Use view bounds to determine orientation (works even if app is orientation-locked)
+    let isPortraitBounds = height > width
+    
+    if isPortraitBounds {
 
       var ratio: CGFloat = 1.0
 
@@ -693,7 +698,11 @@ public class YOLOView: UIView, VideoCaptureDelegate {
         }
       }
     } else {
+      // LANDSCAPE MODE
       resultCount = predictions.boxes.count
+      print("🖼️ LANDSCAPE: View bounds: \(width)x\(height), detections: \(resultCount)")
+      print("🖼️ LANDSCAPE: Camera longSide: \(videoCapture.longSide), shortSide: \(videoCapture.shortSide)")
+      
       if showUIControls {
         self.labelSliderNumItems.text =
           String(resultCount) + " items (max " + String(Int(sliderNumItems.value)) + ")"
@@ -701,6 +710,7 @@ public class YOLOView: UIView, VideoCaptureDelegate {
 
       let frameAspectRatio = videoCapture.longSide / videoCapture.shortSide
       let viewAspectRatio = width / height
+      print("🖼️ LANDSCAPE: frameAspectRatio: \(frameAspectRatio), viewAspectRatio: \(viewAspectRatio)")
       var scaleX: CGFloat = 1.0
       var scaleY: CGFloat = 1.0
       var offsetX: CGFloat = 0.0
@@ -765,6 +775,7 @@ public class YOLOView: UIView, VideoCaptureDelegate {
           rect.size.height *= videoCapture.shortSide * scaleY
 
           if _showOverlays {
+            print("🎯 LANDSCAPE: Drawing circle at rect: \(rect)")
             boundingBoxViews[i].show(
               frame: rect,
               label: label,
@@ -1145,22 +1156,15 @@ public class YOLOView: UIView, VideoCaptureDelegate {
   }
 
   @objc func orientationDidChange() {
-    var orientation: AVCaptureVideoOrientation = .portrait
-    switch UIDevice.current.orientation {
-    case .portrait:
-      orientation = .portrait
-    case .portraitUpsideDown:
-      orientation = .portraitUpsideDown
-    case .landscapeRight:
-      orientation = .landscapeLeft
-    case .landscapeLeft:
-      orientation = .landscapeRight
-    default:
-      return
-    }
+    // For locked landscape apps, always use landscape orientation
+    // landscapeRight corresponds to device landscapeLeft (home button on right)
+    let orientation: AVCaptureVideoOrientation = .landscapeRight
+    print("📱 orientationDidChange: Forcing landscape orientation")
     videoCapture.updateVideoOrientation(orientation: orientation)
-
-    //      frameSizeCaptured = false
+    
+    // Reset frame size capture so it recalculates for new orientation
+    videoCapture.frameSizeCaptured = false
+    print("📱 Orientation changed to: \(UIDevice.current.orientation.rawValue), video orientation: \(orientation.rawValue)")
   }
 
   @objc func sliderChanged(_ sender: Any) {

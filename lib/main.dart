@@ -7,10 +7,10 @@ import 'screens/ball_detection_screen_optimized.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Set portrait orientation
+  // Lock to LANDSCAPE orientation
   await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
   ]);
   
   // Enable wakelock to keep screen on during detection
