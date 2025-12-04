@@ -40,6 +40,12 @@ public class YOLOView: UIView, VideoCaptureDelegate {
       return
     }
 
+    // Update position tracking for smooth overlay prediction
+    if usePredictiveOverlay && task == .detect {
+      updatePositionTracking(boxes: result.boxes)
+      lastYOLOResult = result  // Store for display link updates
+    }
+    
     showBoxes(predictions: result)
     onDetection?(result)
     print("✅ YOLOView.onPredict: Detections processed and callbacks fired")
@@ -128,6 +134,23 @@ public class YOLOView: UIView, VideoCaptureDelegate {
   // Performance data tracking
   private var currentFps: Double = 0.0
   private var currentProcessingTime: Double = 0.0
+
+  // Position prediction for smooth overlay rendering
+  private var usePredictiveOverlay = true  // Enable smooth overlay prediction
+  private var lastDetectionTime: TimeInterval = 0  // Time of last YOLO detection
+  private var prevCenterX: CGFloat = 0  // Previous detection center X
+  private var prevCenterY: CGFloat = 0  // Previous detection center Y
+  private var prevWidth: CGFloat = 0    // Previous detection width
+  private var prevHeight: CGFloat = 0   // Previous detection height
+  private var velocityX: CGFloat = 0    // Estimated velocity X (points per second)
+  private var velocityY: CGFloat = 0    // Estimated velocity Y (points per second)
+  private var hasValidPrediction = false  // Do we have enough data to predict?
+  
+  // CADisplayLink for smooth 60fps overlay updates
+  private var displayLink: CADisplayLink?
+  
+  // Store last YOLO result for display link updates
+  private var lastYOLOResult: YOLOResult?
 
   private var videoCapture: VideoCapture
   private var busy = false
@@ -427,6 +450,11 @@ public class YOLOView: UIView, VideoCaptureDelegate {
           print("📹 YOLOView.start: Starting video capture...")
           self.videoCapture.start()
           print("✅ YOLOView.start: Video capture started successfully!")
+          
+          // Start smooth overlay updates for predictive tracking
+          if self.usePredictiveOverlay {
+            self.startSmoothOverlayUpdates()
+          }
 
           self.busy = false
         } else {
@@ -457,6 +485,106 @@ public class YOLOView: UIView, VideoCaptureDelegate {
     videoCapture.delegate = nil
     // Release predictor to prevent memory leak
     videoCapture.predictor = nil
+    // Stop smooth overlay updates
+    stopSmoothOverlayUpdates()
+    hasValidPrediction = false
+  }
+  
+  // MARK: - Predictive Overlay
+  
+  /// Enable or disable predictive overlay for smoother ball tracking.
+  /// When enabled, the overlay predicts ball position between YOLO detections.
+  public func setPredictiveOverlayEnabled(_ enabled: Bool) {
+    usePredictiveOverlay = enabled
+    if enabled {
+      startSmoothOverlayUpdates()
+    } else {
+      stopSmoothOverlayUpdates()
+    }
+    print("🎯 Predictive overlay \(enabled ? "enabled" : "disabled")")
+  }
+  
+  /// Start smooth overlay updates at ~60fps using CADisplayLink
+  private func startSmoothOverlayUpdates() {
+    guard displayLink == nil else { return }
+    
+    displayLink = CADisplayLink(target: self, selector: #selector(displayLinkUpdate))
+    displayLink?.preferredFramesPerSecond = 60
+    displayLink?.add(to: .main, forMode: .common)
+    print("✅ Started smooth overlay updates at 60fps")
+  }
+  
+  /// Stop smooth overlay updates
+  private func stopSmoothOverlayUpdates() {
+    displayLink?.invalidate()
+    displayLink = nil
+    print("🛑 Stopped smooth overlay updates")
+  }
+  
+  /// Called by CADisplayLink at 60fps to update overlay
+  @objc private func displayLinkUpdate() {
+    guard usePredictiveOverlay && hasValidPrediction else { return }
+    
+    // Force redraw of bounding boxes with predicted positions
+    if let result = lastYOLOResult {
+      showBoxes(predictions: result)
+    }
+  }
+  
+  /// Update position tracking data when YOLO detects a ball.
+  private func updatePositionTracking(boxes: [Box]) {
+    guard !boxes.isEmpty else {
+      // No detection - keep predicting from last known velocity
+      return
+    }
+    
+    let box = boxes[0]  // Track first/primary detection
+    let newCenterX = box.xywh.midX
+    let newCenterY = box.xywh.midY
+    let newWidth = box.xywh.width
+    let newHeight = box.xywh.height
+    let currentTime = CACurrentMediaTime()
+    
+    if hasValidPrediction && lastDetectionTime > 0 {
+      // Calculate velocity from position change
+      let dt = currentTime - lastDetectionTime
+      if dt > 0 {
+        let newVx = (newCenterX - prevCenterX) / CGFloat(dt)
+        let newVy = (newCenterY - prevCenterY) / CGFloat(dt)
+        
+        // Smooth velocity using exponential moving average
+        let alpha: CGFloat = 0.5
+        velocityX = alpha * newVx + (1 - alpha) * velocityX
+        velocityY = alpha * newVy + (1 - alpha) * velocityY
+      }
+    }
+    
+    // Update tracking state
+    prevCenterX = newCenterX
+    prevCenterY = newCenterY
+    prevWidth = newWidth
+    prevHeight = newHeight
+    lastDetectionTime = currentTime
+    hasValidPrediction = true
+  }
+  
+  /// Get predicted position for current time.
+  /// Returns (centerX, centerY, width, height) or nil if no prediction available.
+  private func getPredictedPosition() -> (CGFloat, CGFloat, CGFloat, CGFloat)? {
+    guard hasValidPrediction && usePredictiveOverlay else { return nil }
+    
+    let currentTime = CACurrentMediaTime()
+    let dt = currentTime - lastDetectionTime
+    
+    // Limit prediction to 200ms to avoid runaway extrapolation
+    let maxPrediction: TimeInterval = 0.2
+    let clampedDt = min(dt, maxPrediction)
+    
+    // Predict current position
+    let predictedX = prevCenterX + velocityX * CGFloat(clampedDt)
+    let predictedY = prevCenterY + velocityY * CGFloat(clampedDt)
+    
+    return (predictedX, predictedY, prevWidth, prevHeight)
   }
 
   public func resume() {
@@ -602,6 +730,10 @@ public class YOLOView: UIView, VideoCaptureDelegate {
         self.labelSliderNumItems.text =
           String(resultCount) + " items (max " + String(Int(sliderNumItems.value)) + ")"
       }
+      
+      // Get predicted position for smoother tracking (portrait mode)
+      let predictedPosPortrait = getPredictedPosition()
+      
       for i in 0..<boundingBoxViews.count {
         if i < (resultCount) && i < 50 {
           var rect = CGRect.zero
@@ -614,9 +746,28 @@ public class YOLOView: UIView, VideoCaptureDelegate {
           switch task {
           case .detect:
             let prediction = predictions.boxes[i]
-            rect = CGRect(
-              x: prediction.xywhn.minX, y: 1 - prediction.xywhn.maxY, width: prediction.xywhn.width,
-              height: prediction.xywhn.height)
+            
+            // Use predicted position for first box if available
+            if i == 0, let pred = predictedPosPortrait, usePredictiveOverlay {
+              let (predCenterX, predCenterY, predWidth, predHeight) = pred
+              // Convert pixel coords to normalized (0-1)
+              let normX = (predCenterX - predWidth / 2) / predictions.orig_shape.width
+              let normY = (predCenterY - predHeight / 2) / predictions.orig_shape.height
+              let normW = predWidth / predictions.orig_shape.width
+              let normH = predHeight / predictions.orig_shape.height
+              
+              // For detect task, invert y
+              rect = CGRect(
+                x: normX,
+                y: 1 - normY - normH,
+                width: normW,
+                height: normH
+              )
+            } else {
+              rect = CGRect(
+                x: prediction.xywhn.minX, y: 1 - prediction.xywhn.maxY, width: prediction.xywhn.width,
+                height: prediction.xywhn.height)
+            }
             bestClass = prediction.cls
             confidence = CGFloat(prediction.conf)
             let colorIndex = prediction.index % ultralyticsColors.count
@@ -726,6 +877,9 @@ public class YOLOView: UIView, VideoCaptureDelegate {
         offsetY = (videoCapture.shortSide * scaleY - height) / 2
       }
 
+      // Get predicted position for smoother tracking
+      let predictedPos = getPredictedPosition()
+      
       for i in 0..<boundingBoxViews.count {
         if i < resultCount && i < 50 {
           var rect = CGRect.zero
@@ -738,13 +892,32 @@ public class YOLOView: UIView, VideoCaptureDelegate {
           switch task {
           case .detect:
             let prediction = predictions.boxes[i]
-            // For the detect task, invert y using "1 - maxY" as before
-            rect = CGRect(
-              x: prediction.xywhn.minX,
-              y: 1 - prediction.xywhn.maxY,
-              width: prediction.xywhn.width,
-              height: prediction.xywhn.height
-            )
+            
+            // Use predicted position for first box if available
+            if i == 0, let pred = predictedPos, usePredictiveOverlay {
+              let (predCenterX, predCenterY, predWidth, predHeight) = pred
+              // Convert pixel coords to normalized (0-1)
+              let normX = (predCenterX - predWidth / 2) / predictions.orig_shape.width
+              let normY = (predCenterY - predHeight / 2) / predictions.orig_shape.height
+              let normW = predWidth / predictions.orig_shape.width
+              let normH = predHeight / predictions.orig_shape.height
+              
+              // For detect task, invert y
+              rect = CGRect(
+                x: normX,
+                y: 1 - normY - normH,
+                width: normW,
+                height: normH
+              )
+            } else {
+              // Use detection coordinates directly
+              rect = CGRect(
+                x: prediction.xywhn.minX,
+                y: 1 - prediction.xywhn.maxY,
+                width: prediction.xywhn.width,
+                height: prediction.xywhn.height
+              )
+            }
             bestClass = prediction.cls
             confidence = CGFloat(prediction.conf)
 
@@ -1323,6 +1496,10 @@ public class YOLOView: UIView, VideoCaptureDelegate {
 
     // Release predictor to prevent memory leak
     videoCapture.predictor = nil
+    
+    // Stop smooth overlay updates - invalidate display link directly
+    displayLink?.invalidate()
+    displayLink = nil
 
     // Clear all callbacks to prevent retain cycles
     onDetection = nil
