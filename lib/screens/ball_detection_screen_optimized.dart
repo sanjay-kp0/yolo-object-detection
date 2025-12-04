@@ -33,7 +33,7 @@ class _BallDetectionScreenState extends State<BallDetectionScreen> {
     if (_thresholdsSet) return;
     try {
       await _controller.setThresholds(
-        confidenceThreshold: 0.30,
+        confidenceThreshold: 0.20,
         iouThreshold: 0.35,
         numItemsThreshold: 1,  // MAX 1 DETECTION AT A TIME
       );

@@ -155,6 +155,27 @@ class YOLOView @JvmOverloads constructor(
     private var inferenceFrameInterval: Long? = null // Target inference interval in nanoseconds
     private var frameSkipCount: Int = 0 // Current frame skip counter
     private var targetSkipFrames: Int = 0 // Number of frames to skip between inferences
+    
+    // Kalman tracker for smooth tracking between detections (unused for now)
+    private val kalmanTrackerManager = KalmanTrackerManager()
+    private var useKalmanTracking = false  // DISABLED
+    
+    // Position prediction for smooth overlay rendering
+    private var usePredictiveOverlay = true  // Enable smooth overlay prediction
+    private var lastDetectionTimeNs: Long = 0  // Time of last YOLO detection (nanos)
+    private var prevCenterX: Float = 0f  // Previous detection center X
+    private var prevCenterY: Float = 0f  // Previous detection center Y
+    private var prevWidth: Float = 0f    // Previous detection width
+    private var prevHeight: Float = 0f   // Previous detection height
+    private var velocityX: Float = 0f    // Estimated velocity X (pixels per nanosecond)
+    private var velocityY: Float = 0f    // Estimated velocity Y (pixels per nanosecond)
+    private var lastUpdateTimeNs: Long = 0  // Time of last position update
+    private var hasValidPrediction = false  // Do we have enough data to predict?
+    
+    // Choreographer for smooth 60fps overlay updates
+    private var choreographer: android.view.Choreographer? = null
+    private var frameCallback: android.view.Choreographer.FrameCallback? = null
+    private var isOverlayRunning = false
 
     /** Set the callback */
     fun setOnInferenceCallback(callback: (YOLOResult) -> Unit) {
@@ -378,6 +399,132 @@ class YOLOView @JvmOverloads constructor(
         confidenceLabel.visibility = visibility
     }
     
+    /**
+     * Enable or disable predictive overlay for smoother ball tracking.
+     * When enabled, the overlay predicts ball position between YOLO detections.
+     */
+    fun setPredictiveOverlayEnabled(enabled: Boolean) {
+        usePredictiveOverlay = enabled
+        if (enabled) {
+            startSmoothOverlayUpdates()
+        } else {
+            stopSmoothOverlayUpdates()
+        }
+        Log.d(TAG, "Predictive overlay ${if (enabled) "enabled" else "disabled"}")
+    }
+    
+    /**
+     * Start smooth overlay updates at ~60fps using Choreographer
+     */
+    private fun startSmoothOverlayUpdates() {
+        if (isOverlayRunning) return
+        
+        choreographer = android.view.Choreographer.getInstance()
+        frameCallback = object : android.view.Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                if (isOverlayRunning && usePredictiveOverlay) {
+                    // Request overlay redraw
+                    overlayView.invalidate()
+                    // Schedule next frame
+                    choreographer?.postFrameCallback(this)
+                }
+            }
+        }
+        isOverlayRunning = true
+        choreographer?.postFrameCallback(frameCallback!!)
+        Log.d(TAG, "Started smooth overlay updates at 60fps")
+    }
+    
+    /**
+     * Stop smooth overlay updates
+     */
+    private fun stopSmoothOverlayUpdates() {
+        isOverlayRunning = false
+        frameCallback?.let { choreographer?.removeFrameCallback(it) }
+        frameCallback = null
+        choreographer = null
+        Log.d(TAG, "Stopped smooth overlay updates")
+    }
+    
+    /**
+     * Update position tracking data when YOLO detects a ball.
+     * Called from onFrame after successful detection.
+     */
+    private fun updatePositionTracking(boxes: List<Box>) {
+        if (boxes.isEmpty()) {
+            // No detection - keep predicting from last known velocity
+            return
+        }
+        
+        val box = boxes[0]  // Track first/primary detection
+        val newCenterX = (box.xywh.left + box.xywh.right) / 2f
+        val newCenterY = (box.xywh.top + box.xywh.bottom) / 2f
+        val newWidth = box.xywh.width()
+        val newHeight = box.xywh.height()
+        val currentTimeNs = System.nanoTime()
+        
+        if (hasValidPrediction && lastDetectionTimeNs > 0) {
+            // Calculate velocity from position change
+            val dtNs = (currentTimeNs - lastDetectionTimeNs).toFloat()
+            if (dtNs > 0) {
+                val newVx = (newCenterX - prevCenterX) / dtNs
+                val newVy = (newCenterY - prevCenterY) / dtNs
+                
+                // Smooth velocity using exponential moving average
+                val alpha = 0.5f
+                velocityX = alpha * newVx + (1 - alpha) * velocityX
+                velocityY = alpha * newVy + (1 - alpha) * velocityY
+            }
+        }
+        
+        // Update tracking state
+        prevCenterX = newCenterX
+        prevCenterY = newCenterY
+        prevWidth = newWidth
+        prevHeight = newHeight
+        lastDetectionTimeNs = currentTimeNs
+        lastUpdateTimeNs = currentTimeNs
+        hasValidPrediction = true
+    }
+    
+    /**
+     * Get predicted position for current time.
+     * Returns (centerX, centerY, width, height) or null if no prediction available.
+     */
+    private fun getPredictedPosition(): FloatArray? {
+        if (!hasValidPrediction || !usePredictiveOverlay) return null
+        
+        val currentTimeNs = System.nanoTime()
+        val dtNs = (currentTimeNs - lastDetectionTimeNs).toFloat()
+        
+        // Limit prediction to 200ms to avoid runaway extrapolation
+        val maxPredictionNs = 200_000_000f  // 200ms
+        val clampedDtNs = dtNs.coerceAtMost(maxPredictionNs)
+        
+        // Predict current position
+        val predictedX = prevCenterX + velocityX * clampedDtNs
+        val predictedY = prevCenterY + velocityY * clampedDtNs
+        
+        return floatArrayOf(predictedX, predictedY, prevWidth, prevHeight)
+    }
+    
+    /**
+     * Enable or disable Kalman tracking for smooth object tracking between detections.
+     * When enabled, the tracker predicts object positions on frames where YOLO is skipped.
+     */
+    fun setKalmanTrackingEnabled(enabled: Boolean) {
+        useKalmanTracking = enabled
+        if (!enabled) {
+            kalmanTrackerManager.clear()
+        }
+        Log.d(TAG, "Kalman tracking ${if (enabled) "enabled" else "disabled"}")
+    }
+    
+    /**
+     * Check if Kalman tracking is enabled
+     */
+    fun isKalmanTrackingEnabled(): Boolean = useKalmanTracking
+    
     fun setZoomLevel(zoomLevel: Float) {
         camera?.let { cam: Camera ->
             // Clamp zoom level between min and max
@@ -578,6 +725,11 @@ class YOLOView @JvmOverloads constructor(
                         }
                         
                         Log.d(TAG, "Camera setup completed successfully")
+                        
+                        // Start smooth overlay updates for predictive tracking
+                        if (usePredictiveOverlay) {
+                            startSmoothOverlayUpdates()
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Use case binding failed", e)
                     }
@@ -672,6 +824,11 @@ class YOLOView @JvmOverloads constructor(
                 }
                 
                 inferenceResult = resultWithOriginalImage
+                
+                // Update position tracking for smooth overlay prediction
+                if (usePredictiveOverlay && task == YOLOTask.DETECT) {
+                    updatePositionTracking(result.boxes)
+                }
 
                 // Log
                 
@@ -776,15 +933,10 @@ class YOLOView @JvmOverloads constructor(
                 YOLOTask.DETECT -> {
                     Log.d(TAG, "Drawing DETECT boxes: ${result.boxes.size}")
                     
-                    // Debug first box coordinates
-                    if (result.boxes.isNotEmpty()) {
-                        val firstBox = result.boxes[0]
-                        Log.d(TAG, "=== First Box Debug ===")
-                        Log.d(TAG, "Box normalized coords: (${firstBox.xywhn.left}, ${firstBox.xywhn.top}, ${firstBox.xywhn.right}, ${firstBox.xywhn.bottom})")
-                        Log.d(TAG, "Box pixel coords: (${firstBox.xywh.left}, ${firstBox.xywh.top}, ${firstBox.xywh.right}, ${firstBox.xywh.bottom})")
-                    }
+                    // Try to use predicted position for smoother tracking
+                    val prediction = getPredictedPosition()
                     
-                    for (box in result.boxes) {
+                    for ((index, box) in result.boxes.withIndex()) {
                         val alpha = (box.conf * 255).toInt().coerceIn(0, 255)
                         val baseColor = ultralyticsColors[box.index % ultralyticsColors.size]
                         val newColor = Color.argb(
@@ -794,12 +946,31 @@ class YOLOView @JvmOverloads constructor(
                             Color.blue(baseColor)
                         )
 
-                        // Use same coordinate calculation for all orientations
-                        // since the image is now correctly oriented before inference
-                        var left = box.xywh.left * scale + dx
-                        var top = box.xywh.top * scale + dy
-                        var right = box.xywh.right * scale + dx
-                        var bottom = box.xywh.bottom * scale + dy
+                        // Use predicted position for first box if available, otherwise use detection
+                        var left: Float
+                        var top: Float
+                        var right: Float
+                        var bottom: Float
+                        
+                        if (index == 0 && prediction != null && usePredictiveOverlay) {
+                            // Use predicted position for primary detection
+                            val predictedCenterX = prediction[0]
+                            val predictedCenterY = prediction[1]
+                            val predictedWidth = prediction[2]
+                            val predictedHeight = prediction[3]
+                            
+                            // Convert to screen coordinates
+                            left = (predictedCenterX - predictedWidth / 2f) * scale + dx
+                            top = (predictedCenterY - predictedHeight / 2f) * scale + dy
+                            right = (predictedCenterX + predictedWidth / 2f) * scale + dx
+                            bottom = (predictedCenterY + predictedHeight / 2f) * scale + dy
+                        } else {
+                            // Use detection coordinates directly
+                            left = box.xywh.left * scale + dx
+                            top = box.xywh.top * scale + dy
+                            right = box.xywh.right * scale + dx
+                            bottom = box.xywh.bottom * scale + dy
+                        }
                         
                         // Ensure coordinates are within view bounds and maintain aspect ratio
                         val boxWidth = right - left
@@ -1833,6 +2004,13 @@ class YOLOView @JvmOverloads constructor(
             inferenceCallback = null
             streamCallback = null
             inferenceResult = null
+            
+            // Stop smooth overlay updates
+            stopSmoothOverlayUpdates()
+            hasValidPrediction = false
+            
+            // Clear Kalman tracker
+            kalmanTrackerManager.clear()
 
             Log.d(TAG, "YOLOView stop completed successfully")
         } catch (e: Exception) {
