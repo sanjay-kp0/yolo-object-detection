@@ -136,14 +136,26 @@ public class YOLOView: UIView, VideoCaptureDelegate {
   private var currentProcessingTime: Double = 0.0
 
   // Position prediction for smooth overlay rendering
-  private var usePredictiveOverlay = true  // Enable smooth overlay prediction
+  // DISABLED on iOS - 30fps inference is already smooth, prediction causes flickering
+  private var usePredictiveOverlay = false
   private var lastDetectionTime: TimeInterval = 0  // Time of last YOLO detection
-  private var prevCenterX: CGFloat = 0  // Previous detection center X
-  private var prevCenterY: CGFloat = 0  // Previous detection center Y
-  private var prevWidth: CGFloat = 0    // Previous detection width
-  private var prevHeight: CGFloat = 0   // Previous detection height
-  private var velocityX: CGFloat = 0    // Estimated velocity X (points per second)
-  private var velocityY: CGFloat = 0    // Estimated velocity Y (points per second)
+  
+  // Kalman filter state for single ball tracking (6-state: x, y, vx, vy, w, h)
+  private var kalmanState: [CGFloat] = [0, 0, 0, 0, 0, 0]  // [x, y, vx, vy, w, h]
+  private var kalmanInitialized = false
+  
+  // Kalman filter parameters
+  private let processNoise: CGFloat = 0.5      // Higher = more responsive to changes
+  private let measurementNoise: CGFloat = 0.5  // Lower = trust detections more
+  private var kalmanP: [CGFloat] = [100, 100, 100, 100, 100, 100]  // Error covariance (diagonal)
+  
+  // Jitter filtering / position smoothing (DISABLED - was causing wandering)
+  private var smoothedX: CGFloat = 0
+  private var smoothedY: CGFloat = 0
+  private var smoothedW: CGFloat = 0
+  private var smoothedH: CGFloat = 0
+  private let smoothingFactor: CGFloat = 0.0  // 0 = no smoothing (direct Kalman output)
+  
   private var hasValidPrediction = false  // Do we have enough data to predict?
   
   // CADisplayLink for smooth 60fps overlay updates
@@ -488,6 +500,10 @@ public class YOLOView: UIView, VideoCaptureDelegate {
     // Stop smooth overlay updates
     stopSmoothOverlayUpdates()
     hasValidPrediction = false
+    // Reset Kalman filter
+    kalmanInitialized = false
+    kalmanState = [0, 0, 0, 0, 0, 0]
+    kalmanP = [100, 100, 100, 100, 100, 100]
   }
   
   // MARK: - Predictive Overlay
@@ -532,59 +548,135 @@ public class YOLOView: UIView, VideoCaptureDelegate {
   }
   
   /// Update position tracking data when YOLO detects a ball.
+  /// Uses Kalman filter for optimal state estimation.
   private func updatePositionTracking(boxes: [Box]) {
+    let currentTime = CACurrentMediaTime()
+    
     guard !boxes.isEmpty else {
-      // No detection - keep predicting from last known velocity
+      // No detection - just predict forward using Kalman
+      if kalmanInitialized {
+        kalmanPredict(currentTime: currentTime)
+      }
       return
     }
     
     let box = boxes[0]  // Track first/primary detection
-    let newCenterX = box.xywh.midX
-    let newCenterY = box.xywh.midY
-    let newWidth = box.xywh.width
-    let newHeight = box.xywh.height
-    let currentTime = CACurrentMediaTime()
+    let measuredX = box.xywh.midX
+    let measuredY = box.xywh.midY
+    let measuredW = box.xywh.width
+    let measuredH = box.xywh.height
     
-    if hasValidPrediction && lastDetectionTime > 0 {
-      // Calculate velocity from position change
-      let dt = currentTime - lastDetectionTime
-      if dt > 0 {
-        let newVx = (newCenterX - prevCenterX) / CGFloat(dt)
-        let newVy = (newCenterY - prevCenterY) / CGFloat(dt)
-        
-        // Smooth velocity using exponential moving average
-        let alpha: CGFloat = 0.5
-        velocityX = alpha * newVx + (1 - alpha) * velocityX
-        velocityY = alpha * newVy + (1 - alpha) * velocityY
-      }
+    if !kalmanInitialized {
+      // Initialize Kalman state with first detection
+      kalmanState[0] = measuredX  // x
+      kalmanState[1] = measuredY  // y
+      kalmanState[2] = 0          // vx (unknown)
+      kalmanState[3] = 0          // vy (unknown)
+      kalmanState[4] = measuredW  // width
+      kalmanState[5] = measuredH  // height
+      
+      // Initialize smoothed values
+      smoothedX = measuredX
+      smoothedY = measuredY
+      smoothedW = measuredW
+      smoothedH = measuredH
+      
+      kalmanInitialized = true
+      hasValidPrediction = true
+      lastDetectionTime = currentTime
+      print("🎯 Kalman initialized at (\(measuredX), \(measuredY))")
+      return
     }
     
-    // Update tracking state
-    prevCenterX = newCenterX
-    prevCenterY = newCenterY
-    prevWidth = newWidth
-    prevHeight = newHeight
+    // Kalman predict step
+    kalmanPredict(currentTime: currentTime)
+    
+    // Kalman update step with measurement
+    kalmanUpdate(measuredX: measuredX, measuredY: measuredY, measuredW: measuredW, measuredH: measuredH)
+    
     lastDetectionTime = currentTime
-    hasValidPrediction = true
+  }
+  
+  /// Kalman filter predict step - predict state forward in time
+  private func kalmanPredict(currentTime: TimeInterval) {
+    guard kalmanInitialized && lastDetectionTime > 0 else { return }
+    
+    let dt = CGFloat(currentTime - lastDetectionTime)
+    
+    // Limit dt to prevent huge jumps
+    let clampedDt = min(max(dt, 0), 0.2)
+    
+    // State prediction: x = x + vx*dt, y = y + vy*dt
+    kalmanState[0] += kalmanState[2] * clampedDt  // x += vx * dt
+    kalmanState[1] += kalmanState[3] * clampedDt  // y += vy * dt
+    // velocity and size stay same (constant velocity model)
+    
+    // Increase uncertainty (P = P + Q)
+    for i in 0..<6 {
+      kalmanP[i] += processNoise
+    }
+  }
+  
+  /// Kalman filter update step - correct state with measurement
+  private func kalmanUpdate(measuredX: CGFloat, measuredY: CGFloat, measuredW: CGFloat, measuredH: CGFloat) {
+    // Innovation (measurement residual)
+    let innovationX = measuredX - kalmanState[0]
+    let innovationY = measuredY - kalmanState[1]
+    let innovationW = measuredW - kalmanState[4]
+    let innovationH = measuredH - kalmanState[5]
+    
+    // Kalman gain: K = P / (P + R)
+    let kX = kalmanP[0] / (kalmanP[0] + measurementNoise)
+    let kY = kalmanP[1] / (kalmanP[1] + measurementNoise)
+    let kW = kalmanP[4] / (kalmanP[4] + measurementNoise)
+    let kH = kalmanP[5] / (kalmanP[5] + measurementNoise)
+    
+    // Update state: x = x + K * innovation
+    kalmanState[0] += kX * innovationX
+    kalmanState[1] += kY * innovationY
+    kalmanState[4] += kW * innovationW
+    kalmanState[5] += kH * innovationH
+    
+    // Update velocity estimate from position change
+    // Use smaller weight for velocity to prevent overreaction
+    let dtSec: CGFloat = 1.0 / 30.0  // Approximate detection interval for iOS
+    kalmanState[2] = 0.9 * kalmanState[2] + 0.1 * (innovationX / dtSec)
+    kalmanState[3] = 0.9 * kalmanState[3] + 0.1 * (innovationY / dtSec)
+    
+    // Dampen velocity when innovation is small (ball is stationary)
+    if abs(innovationX) < 5 && abs(innovationY) < 5 {
+      kalmanState[2] *= 0.8  // Reduce velocity when ball seems stationary
+      kalmanState[3] *= 0.8
+    }
+    
+    // Update uncertainty: P = (1 - K) * P
+    kalmanP[0] *= (1 - kX)
+    kalmanP[1] *= (1 - kY)
+    kalmanP[4] *= (1 - kW)
+    kalmanP[5] *= (1 - kH)
+    
+    print("🎯 Kalman updated: pos=(\(kalmanState[0]), \(kalmanState[1])) vel=(\(kalmanState[2]), \(kalmanState[3]))")
   }
   
   /// Get predicted position for current time.
   /// Returns (centerX, centerY, width, height) or nil if no prediction available.
   private func getPredictedPosition() -> (CGFloat, CGFloat, CGFloat, CGFloat)? {
-    guard hasValidPrediction && usePredictiveOverlay else { return nil }
+    guard hasValidPrediction && usePredictiveOverlay && kalmanInitialized else { return nil }
     
     let currentTime = CACurrentMediaTime()
-    let dt = currentTime - lastDetectionTime
     
-    // Limit prediction to 200ms to avoid runaway extrapolation
-    let maxPrediction: TimeInterval = 0.2
-    let clampedDt = min(dt, maxPrediction)
+    // Predict current position using Kalman state
+    let dt = CGFloat(currentTime - lastDetectionTime)
+    let clampedDt = min(max(dt, 0), 0.15)  // Max 150ms prediction
     
-    // Predict current position
-    let predictedX = prevCenterX + velocityX * CGFloat(clampedDt)
-    let predictedY = prevCenterY + velocityY * CGFloat(clampedDt)
+    // Predicted position based on velocity (with damping for long predictions)
+    let dampingFactor = 1.0 - (clampedDt / 0.15) * 0.5  // Reduce velocity effect over time
+    let predictedX = kalmanState[0] + kalmanState[2] * clampedDt * dampingFactor
+    let predictedY = kalmanState[1] + kalmanState[3] * clampedDt * dampingFactor
+    let predictedW = kalmanState[4]
+    let predictedH = kalmanState[5]
     
-    return (predictedX, predictedY, prevWidth, prevHeight)
+    return (predictedX, predictedY, predictedW, predictedH)
   }
 
   public func resume() {

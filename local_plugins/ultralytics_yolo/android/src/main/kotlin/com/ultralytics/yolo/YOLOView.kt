@@ -163,13 +163,23 @@ class YOLOView @JvmOverloads constructor(
     // Position prediction for smooth overlay rendering
     private var usePredictiveOverlay = true  // Enable smooth overlay prediction
     private var lastDetectionTimeNs: Long = 0  // Time of last YOLO detection (nanos)
-    private var prevCenterX: Float = 0f  // Previous detection center X
-    private var prevCenterY: Float = 0f  // Previous detection center Y
-    private var prevWidth: Float = 0f    // Previous detection width
-    private var prevHeight: Float = 0f   // Previous detection height
-    private var velocityX: Float = 0f    // Estimated velocity X (pixels per nanosecond)
-    private var velocityY: Float = 0f    // Estimated velocity Y (pixels per nanosecond)
-    private var lastUpdateTimeNs: Long = 0  // Time of last position update
+    
+    // Kalman filter state for single ball tracking (6-state: x, y, vx, vy, w, h)
+    private var kalmanState = FloatArray(6) { 0f }  // [x, y, vx, vy, w, h]
+    private var kalmanInitialized = false
+    
+    // Kalman filter parameters
+    private val processNoise = 0.5f      // Higher = more responsive to changes
+    private val measurementNoise = 0.5f  // Lower = trust detections more
+    private var kalmanP = FloatArray(6) { 100f }  // Error covariance (diagonal)
+    
+    // Jitter filtering / position smoothing (DISABLED - was causing wandering)
+    private var smoothedX: Float = 0f
+    private var smoothedY: Float = 0f
+    private var smoothedW: Float = 0f
+    private var smoothedH: Float = 0f
+    private val smoothingFactor = 0.0f  // 0 = no smoothing (direct Kalman output)
+    
     private var hasValidPrediction = false  // Do we have enough data to predict?
     
     // Choreographer for smooth 60fps overlay updates
@@ -448,43 +458,121 @@ class YOLOView @JvmOverloads constructor(
     
     /**
      * Update position tracking data when YOLO detects a ball.
+     * Uses Kalman filter for optimal state estimation.
      * Called from onFrame after successful detection.
      */
     private fun updatePositionTracking(boxes: List<Box>) {
+        val currentTimeNs = System.nanoTime()
+        
         if (boxes.isEmpty()) {
-            // No detection - keep predicting from last known velocity
+            // No detection - just predict forward using Kalman
+            if (kalmanInitialized) {
+                kalmanPredict(currentTimeNs)
+            }
             return
         }
         
         val box = boxes[0]  // Track first/primary detection
-        val newCenterX = (box.xywh.left + box.xywh.right) / 2f
-        val newCenterY = (box.xywh.top + box.xywh.bottom) / 2f
-        val newWidth = box.xywh.width()
-        val newHeight = box.xywh.height()
-        val currentTimeNs = System.nanoTime()
+        val measuredX = (box.xywh.left + box.xywh.right) / 2f
+        val measuredY = (box.xywh.top + box.xywh.bottom) / 2f
+        val measuredW = box.xywh.width()
+        val measuredH = box.xywh.height()
         
-        if (hasValidPrediction && lastDetectionTimeNs > 0) {
-            // Calculate velocity from position change
-            val dtNs = (currentTimeNs - lastDetectionTimeNs).toFloat()
-            if (dtNs > 0) {
-                val newVx = (newCenterX - prevCenterX) / dtNs
-                val newVy = (newCenterY - prevCenterY) / dtNs
-                
-                // Smooth velocity using exponential moving average
-                val alpha = 0.5f
-                velocityX = alpha * newVx + (1 - alpha) * velocityX
-                velocityY = alpha * newVy + (1 - alpha) * velocityY
-            }
+        if (!kalmanInitialized) {
+            // Initialize Kalman state with first detection
+            kalmanState[0] = measuredX  // x
+            kalmanState[1] = measuredY  // y
+            kalmanState[2] = 0f         // vx (unknown)
+            kalmanState[3] = 0f         // vy (unknown)
+            kalmanState[4] = measuredW  // width
+            kalmanState[5] = measuredH  // height
+            
+            // Initialize smoothed values
+            smoothedX = measuredX
+            smoothedY = measuredY
+            smoothedW = measuredW
+            smoothedH = measuredH
+            
+            kalmanInitialized = true
+            hasValidPrediction = true
+            lastDetectionTimeNs = currentTimeNs
+            Log.d(TAG, "Kalman initialized at ($measuredX, $measuredY)")
+            return
         }
         
-        // Update tracking state
-        prevCenterX = newCenterX
-        prevCenterY = newCenterY
-        prevWidth = newWidth
-        prevHeight = newHeight
+        // Kalman predict step
+        kalmanPredict(currentTimeNs)
+        
+        // Kalman update step with measurement
+        kalmanUpdate(measuredX, measuredY, measuredW, measuredH)
+        
         lastDetectionTimeNs = currentTimeNs
-        lastUpdateTimeNs = currentTimeNs
-        hasValidPrediction = true
+    }
+    
+    /**
+     * Kalman filter predict step - predict state forward in time
+     */
+    private fun kalmanPredict(currentTimeNs: Long) {
+        if (!kalmanInitialized || lastDetectionTimeNs == 0L) return
+        
+        val dtNs = (currentTimeNs - lastDetectionTimeNs).toFloat()
+        val dtSec = dtNs / 1_000_000_000f  // Convert to seconds
+        
+        // Limit dt to prevent huge jumps
+        val clampedDt = dtSec.coerceIn(0f, 0.2f)
+        
+        // State prediction: x = x + vx*dt, y = y + vy*dt
+        kalmanState[0] += kalmanState[2] * clampedDt  // x += vx * dt
+        kalmanState[1] += kalmanState[3] * clampedDt  // y += vy * dt
+        // velocity and size stay same (constant velocity model)
+        
+        // Increase uncertainty (P = P + Q)
+        for (i in 0 until 6) {
+            kalmanP[i] += processNoise
+        }
+    }
+    
+    /**
+     * Kalman filter update step - correct state with measurement
+     */
+    private fun kalmanUpdate(measuredX: Float, measuredY: Float, measuredW: Float, measuredH: Float) {
+        // Innovation (measurement residual)
+        val innovationX = measuredX - kalmanState[0]
+        val innovationY = measuredY - kalmanState[1]
+        val innovationW = measuredW - kalmanState[4]
+        val innovationH = measuredH - kalmanState[5]
+        
+        // Kalman gain: K = P / (P + R)
+        val kX = kalmanP[0] / (kalmanP[0] + measurementNoise)
+        val kY = kalmanP[1] / (kalmanP[1] + measurementNoise)
+        val kW = kalmanP[4] / (kalmanP[4] + measurementNoise)
+        val kH = kalmanP[5] / (kalmanP[5] + measurementNoise)
+        
+        // Update state: x = x + K * innovation
+        kalmanState[0] += kX * innovationX
+        kalmanState[1] += kY * innovationY
+        kalmanState[4] += kW * innovationW
+        kalmanState[5] += kH * innovationH
+        
+        // Update velocity estimate from position change
+        // Use smaller weight for velocity to prevent overreaction
+        val dtSec = 1f / 15f  // Approximate detection interval
+        kalmanState[2] = 0.9f * kalmanState[2] + 0.1f * (innovationX / dtSec)
+        kalmanState[3] = 0.9f * kalmanState[3] + 0.1f * (innovationY / dtSec)
+        
+        // Dampen velocity when innovation is small (ball is stationary)
+        if (kotlin.math.abs(innovationX) < 5f && kotlin.math.abs(innovationY) < 5f) {
+            kalmanState[2] *= 0.8f  // Reduce velocity when ball seems stationary
+            kalmanState[3] *= 0.8f
+        }
+        
+        // Update uncertainty: P = (1 - K) * P
+        kalmanP[0] *= (1 - kX)
+        kalmanP[1] *= (1 - kY)
+        kalmanP[4] *= (1 - kW)
+        kalmanP[5] *= (1 - kH)
+        
+        Log.d(TAG, "Kalman updated: pos=(${kalmanState[0]}, ${kalmanState[1]}) vel=(${kalmanState[2]}, ${kalmanState[3]})")
     }
     
     /**
@@ -492,20 +580,22 @@ class YOLOView @JvmOverloads constructor(
      * Returns (centerX, centerY, width, height) or null if no prediction available.
      */
     private fun getPredictedPosition(): FloatArray? {
-        if (!hasValidPrediction || !usePredictiveOverlay) return null
+        if (!hasValidPrediction || !usePredictiveOverlay || !kalmanInitialized) return null
         
         val currentTimeNs = System.nanoTime()
+        
+        // Predict current position using Kalman state
         val dtNs = (currentTimeNs - lastDetectionTimeNs).toFloat()
+        val dtSec = (dtNs / 1_000_000_000f).coerceIn(0f, 0.15f)  // Max 150ms prediction
         
-        // Limit prediction to 200ms to avoid runaway extrapolation
-        val maxPredictionNs = 200_000_000f  // 200ms
-        val clampedDtNs = dtNs.coerceAtMost(maxPredictionNs)
+        // Predicted position based on velocity (with damping for long predictions)
+        val dampingFactor = 1f - (dtSec / 0.15f) * 0.5f  // Reduce velocity effect over time
+        val predictedX = kalmanState[0] + kalmanState[2] * dtSec * dampingFactor
+        val predictedY = kalmanState[1] + kalmanState[3] * dtSec * dampingFactor
+        val predictedW = kalmanState[4]
+        val predictedH = kalmanState[5]
         
-        // Predict current position
-        val predictedX = prevCenterX + velocityX * clampedDtNs
-        val predictedY = prevCenterY + velocityY * clampedDtNs
-        
-        return floatArrayOf(predictedX, predictedY, prevWidth, prevHeight)
+        return floatArrayOf(predictedX, predictedY, predictedW, predictedH)
     }
     
     /**
@@ -2008,6 +2098,9 @@ class YOLOView @JvmOverloads constructor(
             // Stop smooth overlay updates
             stopSmoothOverlayUpdates()
             hasValidPrediction = false
+            kalmanInitialized = false
+            kalmanState = FloatArray(6) { 0f }
+            kalmanP = FloatArray(6) { 100f }
             
             // Clear Kalman tracker
             kalmanTrackerManager.clear()
